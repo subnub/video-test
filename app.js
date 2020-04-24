@@ -45,7 +45,7 @@ app.get("/video", async(req, res) => {
 
     if (chunkStart !== 0) {
     
-        IV = await getPrevIV(chunkStart - 16);
+        currentIV = await getPrevIV(chunkStart - 16);
         console.log("New IV", IV);
         // Here I check for the IV if the start is not 0, 
         // I use the fixed chunkStart, then check 16 bytes for it
