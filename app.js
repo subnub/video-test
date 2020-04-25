@@ -5,10 +5,8 @@ const fs = require("fs");
 
 const password = "hellothere";
 const initVect = Buffer.from("605e9d9e27aadba7ec3c9561d02efc1d", "hex");
-const hashedPassword = crypto.createHash('sha256').update(password).digest();
 
-const originalFileSize = 5510872;
-const encryptedFileSize = 5510880
+const originalFileSize = 5510880;
 
 const app = express();
 const publicPath = path.join(__dirname, "public");
@@ -35,26 +33,32 @@ app.get("/video", async(req, res) => {
         'Content-Length': chunksize,
         'Content-Type': 'video/mp4'}
 
-    const chunkStart = start === 0 ? 0 : fixStartChunkLength(start);
-    // If the requests asks for 0, leave it at 0. 
 
-    let chunkEnd = fixChunkLength(end);
-    if (chunkEnd === 16) chunkEnd = 15;
-    // 0 index will mess up the calculation, so if its 16, we must 
-    // Change it down to 15, or I get the wrong block size error
-
-    if (chunkStart !== 0) {
+    let fixedStart = start % 16 === 0 ? start : fixStartChunkLength(start);
     
-        currentIV = await getPrevIV(chunkStart - 16);
+    if (+start === 0) {
+
+        fixedStart = 0;
+    }
+    // If it starts at 0, stay at 0, this is pretty ugly and can be improved. 
+
+    // Sometimes It would miss the last byte of data when fixing the chunk length,
+    // So I add 16 extra just incase, I should probably improve this, but it works atm
+    const fixedEnd = end % 16 === 0 ? end + 15: (fixChunkLength(end) - 1) + 16;
+
+    const differenceEnd = fixedEnd - end;
+    const differenceStqart = start - fixedStart;
+
+    if (fixedStart !== 0 && start !== 0) {
+    
+        currentIV = await getPrevIV(fixedStart - 16);
         console.log("New IV", currentIV);
-        // Here I check for the IV if the start is not 0, 
-        // I use the fixed chunkStart, then check 16 bytes for it
-        // And return those bytes. 
+        // If this is not the start, get the new IV.
     }
 
     const readStream = fs.createReadStream("ebunny.mp4", {
-        start: chunkStart,
-        end: chunkEnd,
+        start: fixedStart,
+        end: fixedEnd,
     });
 
     const CIPHER_KEY = crypto.createHash('sha256').update(password).digest()        
@@ -67,11 +71,63 @@ app.get("/video", async(req, res) => {
 
     readStream.pipe(decipher);
 
+    let firstBytesRemoved = false;
+    let sizeCounter = 0;
+
     decipher.on("data", (data) => {
 
+        if (+start === 0 && +end === 1) {
+
+            // If Apple requests the first bytes of data, 
+            // I just get the first encrypted 16 bytes, 
+            // And splice off the extra data
+                
+            const dataCoverted = data.toString("hex");
+            
+            let neededData = dataCoverted.substring(0, 4);
+
+            const dataBack = Buffer.from(neededData, "hex");
+
+            res.write(dataBack);
+            res.flushHeaders();
+
+            console.log("Sent Apple Data", dataBack);
+            return;
+        }
+
+        if (!firstBytesRemoved) {
+
+            // Removes the first extra bytes
+
+            console.log("Removing First Bytes");
+            const dataCoverted = data.toString("hex");
+
+            let neededData = dataCoverted.substring(differenceStqart * 2);
+
+            const dataBack = Buffer.from(neededData, "hex");
+
+            console.log("data with first bytes removed", dataBack);
+
+            firstBytesRemoved = true;
+
+            sizeCounter += dataBack.length;
+
+            res.write(dataBack);
+            res.flushHeaders();
+
+            console.log("First bytes removed", dataBack);
+            return;
+        }
+
+        // Just return the bytes normally here. 
         res.write(data);
-        // At the moment I am not stripping off the extra data, i'm not 
-        // Sure how to do this, but such little bytes might not matter
+        res.flushHeaders();
+
+        sizeCounter += data.length;
+        // I keep a size counter, just incase in the future I want to shave 
+        // Off the last extra bytes at the end, but it seems like it only cares about 
+        // The first bytes being correct, and having extra bytes 
+        // At the end will still allow it to work fine.
     })
 
     decipher.on("end", () => {
@@ -114,4 +170,5 @@ const getPrevIV = (start) => {
         })
     })
 }
+
 
