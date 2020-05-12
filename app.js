@@ -2,18 +2,29 @@ const express = require("express");
 const path = require("path");
 const crypto = require("crypto");
 const fs = require("fs");
+const tempStorage = require("./tempStorage");
+const getFileSize = require("./getFileSize");
+const uuid = require("uuid");
 
 const password = "hellothere";
 const initVect = Buffer.from("605e9d9e27aadba7ec3c9561d02efc1d", "hex");
 
-const originalFileSize = 5510880;
+
 
 const app = express();
 const publicPath = path.join(__dirname, "public");
 
 app.use(express.static(publicPath));
 
-app.get("/video", async(req, res) => {
+app.get("/video/:uuid", async(req, res) => {
+
+    const originalFileSize = await getFileSize("./ebunny.mp4");
+    const paramsUUID = req.params.uuid;
+    const currentUUID = uuid.v4();
+    tempStorage[paramsUUID] = currentUUID; 
+
+    //console.log("file size", originalFileSize);
+    console.log("File Request");
 
     const headers = req.headers;
 
@@ -52,7 +63,7 @@ app.get("/video", async(req, res) => {
     if (fixedStart !== 0 && start !== 0) {
     
         currentIV = await getPrevIV(fixedStart - 16);
-        console.log("New IV", currentIV);
+        //console.log("New IV", currentIV);
         // If this is not the start, get the new IV.
     }
 
@@ -75,6 +86,15 @@ app.get("/video", async(req, res) => {
     let sizeCounter = 0;
 
     decipher.on("data", (data) => {
+
+        if (tempStorage[paramsUUID] !== currentUUID) {
+
+            console.log("Destoying old stream");
+            readStream.destroy();
+            decipher.destroy();
+            console.log("Read Stream Destroyed");
+            return;
+        }
 
         if (+start === 0 && +end === 1) {
 
@@ -99,14 +119,14 @@ app.get("/video", async(req, res) => {
 
             // Removes the first extra bytes
 
-            console.log("Removing First Bytes");
+            //console.log("Removing First Bytes");
             const dataCoverted = data.toString("hex");
 
             let neededData = dataCoverted.substring(differenceStqart * 2);
 
             const dataBack = Buffer.from(neededData, "hex");
 
-            console.log("data with first bytes removed", dataBack);
+            //console.log("data with first bytes removed", dataBack);
 
             firstBytesRemoved = true;
 
@@ -115,7 +135,7 @@ app.get("/video", async(req, res) => {
             res.write(dataBack);
             res.flushHeaders();
 
-            console.log("First bytes removed", dataBack);
+            //console.log("First bytes removed", dataBack);
             return;
         }
 
@@ -131,6 +151,7 @@ app.get("/video", async(req, res) => {
     })
 
     decipher.on("end", () => {
+        console.log("File Request Finished")
         res.end();
     })
 })
